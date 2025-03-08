@@ -23,7 +23,7 @@ class ExtraTask:
             extra_tasks, completed_count = self._get_extra_tasks()
             
             # 如果已经完成7个任务，直接返回
-            if completed_count >= 7:
+            if completed_count >= 15:
                 self.logger.info(f"今日已完成 {completed_count} 个额外评分任务，已达到每日上限")
                 return
                 
