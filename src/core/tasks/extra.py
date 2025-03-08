@@ -36,7 +36,7 @@ class ExtraTask:
             # 记录本次成功评分的数量
             success_count = 0
             # 每天最多完成7个额外任务
-            remaining_tasks = 7 - completed_count
+            remaining_tasks = 15 - completed_count
             
             for task in extra_tasks:
                 if success_count >= remaining_tasks:
