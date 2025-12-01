@@ -1,0 +1,12 @@
+name: Keep scheduled workflow activity
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # 00:00 UTC every day
+
+jobs:
+  keep-scheduled-workflow-activity:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Keep scheduled workflow activity
+        uses: WaterLemons2k/scheduled-workflow-activity-action@v1
