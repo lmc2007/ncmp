@@ -1,4 +1,4 @@
-name: Auto Score
+name: Auto Scorefix
 
 on:
   schedule:
