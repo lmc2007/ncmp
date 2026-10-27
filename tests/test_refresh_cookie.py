@@ -98,6 +98,50 @@ def test_login_success_path():
     assert res.ok and res.cookies["Cookie_MUSIC_U"] == "u" * 64
 
 
+def test_wrong_password_stops_immediately_without_retry():
+    """502 密码错误不能重试：连撞会把账号打成 509 锁定"""
+    svc = AuthService(logger, retries=5)
+    calls = []
+
+    def boom(*a, **k):
+        calls.append(k)
+        raise LoginError("登录被拒: code=502 msg=账号或密码错误", code=502)
+
+    svc._login_via_channel = boom  # type: ignore
+    res = svc.login_and_verify("13800000000", password="x")
+    assert res.ok is False
+    assert len(calls) == 1, f"502 只应尝试一次，实际 {len(calls)} 次"
+    assert "502" in res.reason
+
+
+def test_locked_account_509_stops_immediately():
+    svc = AuthService(logger, retries=3)
+    calls = []
+
+    def boom(*a, **k):
+        calls.append(1)
+        raise LoginError("登录被拒: code=509 msg=密码错误超过限制", code=509)
+
+    svc._login_via_channel = boom  # type: ignore
+    res = svc.login_and_verify("13800000000", password="x")
+    assert len(calls) == 1
+    assert "锁定" in res.reason
+
+
+def test_rate_limit_503_is_retried():
+    svc = AuthService(logger, retries=2)
+    calls = []
+
+    def boom(*a, **k):
+        calls.append(1)
+        raise LoginError("登录被拒: code=503 msg=过于频繁", code=503)
+
+    svc._login_via_channel = boom  # type: ignore
+    svc._sleep = lambda *a: None  # type: ignore
+    svc.login_and_verify("13800000000", password="x")
+    assert len(calls) > 1, "503 属于限流，应当重试"
+
+
 # ---------------------------------------------------------------- GitHubService
 def test_github_rejects_empty_secret():
     """空值绝不能写进 Secrets（会清掉已有的有效 cookie）"""

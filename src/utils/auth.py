@@ -52,9 +52,9 @@ DEFAULT_REAL_IP = "118.88.88.88"
 # 业务错误码 -> 人话。网易云登录失败时码很杂，这里只覆盖常见几种。
 LOGIN_CODE_HINTS = {
     501: "账号不存在",
-    502: "账号或密码错误。如果你用的是 secrets.NETEASE_MD5_PASSWORD，确认填的是 32 位 md5（不是明文）",
+    502: "账号或密码错误。若确认密码没错，多半是 NETEASE_MD5_PASSWORD 填的 md5 不是当前密码的 md5（手抄/旧密码最常见），建议改用 NETEASE_PASSWORD 直接填明文",
     503: "请求过于频繁，已被限流，稍后重试",
-    509: "账号被限制登录",
+    509: "密码错误次数超限，账号被临时锁定：等 30~60 分钟再试，期间不要重复运行，否则锁定会延长",
     460: "IP 被判定为异常（海外/机房 IP），尝试带上 X-Real-IP 头或换国内网络",
     8815: "需要行为验证，通常由异地 IP / 机房 IP 触发",
     8816: "账号存在风险，网易要求二次验证",
@@ -62,8 +62,12 @@ LOGIN_CODE_HINTS = {
     8822: "需要手机短信验证码",
 }
 
-# 可重试码：限流 / 服务端错误 / 未知网络层失败
-RETRYABLE_CODES = {None, 0, 500, 502, 503, 504, 400}
+# 可重试码：仅限服务端抖动 / 限流。凭据类错误一律不重试，
+# 否则拿错密码连撞几次就会把账号打成 509「密码错误超过限制」。
+RETRYABLE_CODES = {None, 0, 500, 503, 504}
+
+# 终止码：再怎么换通道换 IP 都没用，继续试只会加重风控 / 延长锁定
+FATAL_CODES = {501, 502, 509, 8822}
 
 
 class LoginError(Exception):
@@ -78,6 +82,11 @@ class LoginError(Exception):
     @property
     def retryable(self) -> bool:
         return self.code in RETRYABLE_CODES
+
+    @property
+    def fatal(self) -> bool:
+        """凭据/锁定类错误：应立即停止所有尝试"""
+        return self.code in FATAL_CODES
 
 
 class LoginResult(NamedTuple):
@@ -295,12 +304,19 @@ class AuthService:
                     except LoginError as exc:
                         errors.append(str(exc))
                         self.logger.error(f"[{tag}] 登录失败: {exc}")
+                        if exc.fatal:
+                            self.logger.error(
+                                "凭据/锁定类错误：已停止后续所有尝试，避免触发或延长账号锁定"
+                            )
+                            return LoginResult(
+                                False, None, None, " | ".join(dict.fromkeys(errors))
+                            )
                         if exc.code in (8821, 8815, 8816, 460):
                             risk_controlled = True
                         if exc.retryable and attempt < self.retries - 1:
                             self._sleep(attempt)
                             continue
-                        break  # 凭据/风控类错误：换通道或换 IP 方案才对
+                        break  # 风控类错误：换通道或换 IP 方案才对
                     except Exception as exc:  # 网络层：SSL EOF / 超时 / 连接重置
                         errors.append(f"[{tag}] 网络异常: {type(exc).__name__}: {exc}")
                         self.logger.warning(
@@ -381,7 +397,11 @@ class AuthService:
                 return True, profile, "Cookie 有效"
 
             detail = data.get("msg") or data.get("message") or ""
-            last_error = f"账号接口返回 code={code} {detail}".strip()
+            if code == 200:
+                # 200 但没有 profile：cookie 已失效/被踢，最常见于在别处登录或过期
+                last_error = "账号接口返回 200 但没有 profile —— MUSIC_U 已失效（过期或在别处登出）"
+            else:
+                last_error = f"账号接口返回 code={code} {detail}".strip()
             # 明确的无登录态，不必再重试
             if code in (301, 401, -462):
                 break

@@ -103,11 +103,20 @@ python refresh_cookie.py --diagnose
 
 | code | 含义 | 处理 |
 | --- | --- | --- |
-| 502 | 账号或密码错误 | 检查密码；若用的是 `NETEASE_MD5_PASSWORD`，确认是 32 位 md5 而不是明文（现在填明文会自动纠正并告警） |
+| 502 | 账号或密码错误 | 检查密码；若用的是 `NETEASE_MD5_PASSWORD`，那串 md5 必须**是当前密码**的 md5（手抄旧密码、改过密码最常见）。拿不准就直接填 `NETEASE_PASSWORD` 明文，代码会自动转 md5 |
+| 509 | 密码错误次数超限，账号被临时锁定 | 等 30~60 分钟再试。**不要连续重跑工作流**，否则锁定会延长 |
 | 460 | IP 被判异常（海外/机房） | 启用 `NETEASE_REAL_IP` |
 | 8821 | 需要行为验证码（滑块） | 机房 IP 风控。启用 `NETEASE_REAL_IP`，仍不行就手动更新 cookie 或改用 self-hosted runner |
 | 8816 | 账号风险，要求二次验证 | 手机上登录一次客户端解除验证后再试 |
 | 403 | GitHub Token 权限不足 | classic PAT 需要 `repo`；fine-grained PAT 需要 `Secrets: Read and write` |
+
+注意：`502 / 501 / 509 / 8822` 属于凭据类错误，程序会**立刻停止**所有尝试（不重试、不换通道），避免把账号撞成锁定态；只有 `503`（限流）和网络层错误才重试。
+
+自己算一遍 md5 核对：
+
+```bash
+python -c "import hashlib;print(hashlib.md5('你的密码'.encode()).hexdigest())"
+```
 
 另外：登录失败但**现有 `MUSIC_U` 仍然有效**时，工作流会选择沿用旧 cookie 并只发一封告警邮件，不会把 Secret 写成空值，也不会把 Actions 刷红。
 

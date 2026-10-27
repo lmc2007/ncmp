@@ -87,9 +87,13 @@ jobs:
           *)        python refresh_cookie.py ;;
         esac
 
-    # 首次失败（多为机房到网易的 TLS 抖动）后再试一次；仍失败则任务报红
+    # 首次失败（多为机房到网易的 TLS 抖动）后再试一次。
+    # 只对 refresh 模式重试：diagnose/dry-run 失败通常是用例问题，重试无意义还会多撞一次登录。
     - name: Retry refresh once
-      if: steps.refresh.outcome == 'failure'
+      if: >-
+        steps.refresh.outcome == 'failure' &&
+        github.event.inputs.mode != 'diagnose' &&
+        github.event.inputs.mode != 'dry-run'
       env:
         MUSIC_U: ${{ secrets.MUSIC_U }}
         CSRF: ${{ secrets.CSRF }}
