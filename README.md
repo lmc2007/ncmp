@@ -76,10 +76,40 @@ ncmp(NetEase Cloud Music Partner/网易云音乐合伙人)
   - `NETEASE_MD5_PASSWORD`: MD5加密密码
 - `GH_TOKEN`: 刚才创建的GitHub Token
 
+可选（抗风控 / 排错用）：
+
+- `NETEASE_REAL_IP`: 登录请求携带的 `X-Real-IP` 头，默认 `118.88.88.88`。GitHub Actions 的 runner 在海外机房，网易风控常直接给 `8821 需要行为验证`，这个头是 pyncm 文档里给出的官方绕法；填 `off` 可关闭。
+- `NETEASE_DEVICE_ID`: 设备指纹。**不要随便乱填**——实测用一个新的设备 ID 从新 IP 登录会立刻触发 8821，默认沿用 pyncm 的 `pyncm!` 就好。
+
 #### 5. 启用自动刷新工作流
 
 - 确保仓库中`.github/workflows/refresh_cookie.yml`工作流已启用
-- 您可以在Actions页面手动运行"Cookie Refresh"工作流测试配置是否正确
+- 在 Actions 页面手动运行 "Refresh Cookie"，`Run workflow` 时可选择模式：
+  - `refresh`（默认）：正常登录并写入 Secrets
+  - `dry-run`：只登录+校验，不写 Secrets
+  - `diagnose`：环境自检 + 逐通道登录诊断，排错用这个
+
+#### 6. 登录失败怎么查
+
+本地直接跑诊断模式，会打印现有 cookie 是否有效、登录走了哪个通道、网易返回的真实错误码：
+
+```bash
+export NETEASE_PHONE=你的手机号
+export NETEASE_PASSWORD=你的密码
+python refresh_cookie.py --diagnose
+```
+
+常见错误码：
+
+| code | 含义 | 处理 |
+| --- | --- | --- |
+| 502 | 账号或密码错误 | 检查密码；若用的是 `NETEASE_MD5_PASSWORD`，确认是 32 位 md5 而不是明文（现在填明文会自动纠正并告警） |
+| 460 | IP 被判异常（海外/机房） | 启用 `NETEASE_REAL_IP` |
+| 8821 | 需要行为验证码（滑块） | 机房 IP 风控。启用 `NETEASE_REAL_IP`，仍不行就手动更新 cookie 或改用 self-hosted runner |
+| 8816 | 账号风险，要求二次验证 | 手机上登录一次客户端解除验证后再试 |
+| 403 | GitHub Token 权限不足 | classic PAT 需要 `repo`；fine-grained PAT 需要 `Secrets: Read and write` |
+
+另外：登录失败但**现有 `MUSIC_U` 仍然有效**时，工作流会选择沿用旧 cookie 并只发一封告警邮件，不会把 Secret 写成空值，也不会把 Actions 刷红。
 
 ### 配置邮箱通知（可选）
 
@@ -179,6 +209,8 @@ ncmp(NetEase Cloud Music Partner/网易云音乐合伙人)
    - `WAIT_TIME_MAX`：最大等待时间（可选，默认20）
    - `FULL_EXTRA_TASKS`: 是否完成所有的额外任务 (可选，默认False)
    - `SCORE`：评分策略（可选，默认3）
+   - `NETEASE_PHONE` / `NETEASE_PASSWORD`（或 `NETEASE_MD5_PASSWORD`）/ `GH_TOKEN`：自动刷新 Cookie 用
+   - `NETEASE_REAL_IP`：抗风控头（可选，默认 118.88.88.88）
 
 3. 启用 GitHub Actions：
    - 进入仓库的 Actions 页面
@@ -193,6 +225,7 @@ ncmp(NetEase Cloud Music Partner/网易云音乐合伙人)
 - 建议使用 GitHub Actions 的定时任务功能，避免遗漏每日任务
 - 网易云音乐的 Cookie 两周左右就会过期，建议配置邮箱以便及时收到失效通知
 - Cookie 自动刷新使用了[pyncm](https://github.com/mos9527/pyncm)库进行登陆，如果使用明文会自动将密码进行md5加密
+- `refresh_cookie.py` 失败时会以退出码 1 结束，Actions 会显示红灯（早期版本不管成败都返回 0，于是"看起来成功、实际邮件说失败"）
 
 ## 声明
 

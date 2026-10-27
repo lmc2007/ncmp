@@ -2,38 +2,110 @@ name: Refresh Cookie
 
 on:
   schedule:
-    - cron: '0 14 * * 0'  # 每周日UTC 14:00 (北京时间22:00)
+    - cron: '0 14 * * 0'  # 每周日 UTC 14:00 (北京时间 22:00)
   workflow_dispatch:
+    inputs:
+      mode:
+        description: '运行模式'
+        required: false
+        default: 'refresh'
+        type: choice
+        options:
+          - refresh
+          - dry-run
+          - diagnose
+
+# 定时与手动同时触发时排队，避免并发写同一个 Secret
+concurrency:
+  group: refresh-cookie
+  cancel-in-progress: false
 
 jobs:
   refresh:
     runs-on: ubuntu-latest
-  
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-    
+
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.x'
-    
+        # 固定版本：ubuntu-latest 已迁移到 24.04/26.04，'3.x' 会飘到新版本，
+        # 依赖里的 pyncm fork 在新解释器上不一定装得上
+        python-version: '3.12'
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-    
+
+    - name: Preflight (secrets 是否齐全)
+      env:
+        NETEASE_PHONE: ${{ secrets.NETEASE_PHONE }}
+        NETEASE_PASSWORD: ${{ secrets.NETEASE_PASSWORD }}
+        NETEASE_MD5_PASSWORD: ${{ secrets.NETEASE_MD5_PASSWORD }}
+        NETEASE_REAL_IP: ${{ secrets.NETEASE_REAL_IP }}
+        NETEASE_DEVICE_ID: ${{ secrets.NETEASE_DEVICE_ID }}
+        GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      run: |
+        missing=0
+        [ -n "$NETEASE_PHONE" ] || { echo "::error::缺少 secret NETEASE_PHONE"; missing=1; }
+        if [ -z "$NETEASE_PASSWORD" ] && [ -z "$NETEASE_MD5_PASSWORD" ]; then
+          echo "::error::缺少 secret NETEASE_PASSWORD 或 NETEASE_MD5_PASSWORD"; missing=1
+        fi
+        [ -n "$GH_TOKEN" ] || { echo "::error::缺少 secret GH_TOKEN（需要 secrets 写权限的 PAT）"; missing=1; }
+        exit $missing
+
     - name: Run refresh script
+      id: refresh
+      continue-on-error: true
       env:
         MUSIC_U: ${{ secrets.MUSIC_U }}
         CSRF: ${{ secrets.CSRF }}
         NETEASE_PHONE: ${{ secrets.NETEASE_PHONE }}
         NETEASE_PASSWORD: ${{ secrets.NETEASE_PASSWORD }}
         NETEASE_MD5_PASSWORD: ${{ secrets.NETEASE_MD5_PASSWORD }}
+        NETEASE_REAL_IP: ${{ secrets.NETEASE_REAL_IP }}
+        NETEASE_DEVICE_ID: ${{ secrets.NETEASE_DEVICE_ID }}
         GH_TOKEN: ${{ secrets.GH_TOKEN }}
         GH_REPO: ${{ github.repository }}
         NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
         EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
         SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
         SMTP_PORT: ${{ secrets.SMTP_PORT }}
-      run: python refresh_cookie.py
+        TZ: Asia/Shanghai
+      run: |
+        MODE="${{ github.event.inputs.mode || 'refresh' }}"
+        echo "mode=$MODE trigger=${{ github.event_name }} start=$(date -u +%FT%TZ)"
+        case "$MODE" in
+          diagnose) python refresh_cookie.py --diagnose ;;
+          dry-run)  python refresh_cookie.py --dry-run ;;
+          *)        python refresh_cookie.py ;;
+        esac
+
+    # 首次失败（多为机房到网易的 TLS 抖动）后再试一次；仍失败则任务报红
+    - name: Retry refresh once
+      if: steps.refresh.outcome == 'failure'
+      env:
+        MUSIC_U: ${{ secrets.MUSIC_U }}
+        CSRF: ${{ secrets.CSRF }}
+        NETEASE_PHONE: ${{ secrets.NETEASE_PHONE }}
+        NETEASE_PASSWORD: ${{ secrets.NETEASE_PASSWORD }}
+        NETEASE_MD5_PASSWORD: ${{ secrets.NETEASE_MD5_PASSWORD }}
+        NETEASE_REAL_IP: ${{ secrets.NETEASE_REAL_IP }}
+        NETEASE_DEVICE_ID: ${{ secrets.NETEASE_DEVICE_ID }}
+        GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        GH_REPO: ${{ github.repository }}
+        NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
+        EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+        SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+        SMTP_PORT: ${{ secrets.SMTP_PORT }}
+        TZ: Asia/Shanghai
+      run: |
+        echo "::warning::首次执行失败，30s 后重试一次"
+        sleep 30
+        python refresh_cookie.py
