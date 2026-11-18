@@ -3,7 +3,7 @@ name: Keep Repositories Alive
 on:
   workflow_dispatch: # 允许手动触发
   schedule:
-    - cron: '0 0 */28 * *' # 每 28 天运行一次
+    - cron: '0 0 */27 * *' # 每 28 天运行一次
 
 jobs:
   keep-alive:
